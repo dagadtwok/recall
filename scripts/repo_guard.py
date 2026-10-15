@@ -78,6 +78,8 @@ def check_path(name, mode):
         allowed = path.suffix in ('.patch', '.md')
     elif path.parts[0] == 'docs':
         allowed = path.suffix in ('.md', '.json')
+    elif path.parts[0] == 'research':
+        allowed = path.suffix in ('.md', '.json')
     elif path.parts[0] == 'licenses':
         allowed = True
     elif name in ('.githooks/pre-commit', '.githooks/pre-push'):

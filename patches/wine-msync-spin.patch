@@ -1,0 +1,116 @@
+diff --git a/dlls/ntdll/unix/msync.c b/dlls/ntdll/unix/msync.c
+index ae46bf3..1f9bae4 100644
+--- a/dlls/ntdll/unix/msync.c
++++ b/dlls/ntdll/unix/msync.c
+@@ -103,6 +103,77 @@ static inline int ulock_wait( uint32_t operation, void *addr, uint64_t value, ui
+     }
+ }
+ 
++
++/*
++ * Adaptive spin-before-block (Recall patch, 2026-10-16). By default msync goes
++ * straight from re-reading the shared-memory word to a mach compare-and-wait
++ * sleep, and settling there costs a sleep+wake pair across the kernel. When
++ * WINE_MSYNC_SPIN names a window (iterations), a waiter spins that long
++ * re-reading the word first: a signal landing inside the window settles the
++ * wait with no system call at all. A thread whose waits keep outlasting the
++ * spin is throttled to a short probe so long waits burn no CPU, and a thread
++ * that wins repeatedly is trusted with the full window. Off by default; no
++ * behavior changes unless the variable is set, and timeouts are still honored.
++ */
++static __thread int msync_spin_wins; /* consecutive waits settled by the spin */
++
++static inline void msync_pause(void)
++{
++#if defined(__aarch64__)
++    __builtin_arm_yield();
++#elif defined(__x86_64__)
++    __builtin_ia32_pause();
++#endif
++}
++
++static inline unsigned int msync_spin_iters_for(void)
++{
++    static int iterations = -1;
++
++    if (iterations < 0)
++    {
++        const char *value = getenv( "WINE_MSYNC_SPIN" );
++        int env = value ? atoi( value ) : 0;
++
++        iterations = env > 0 ? (env > 16384 ? 16384 : env) : 0;
++    }
++    if (iterations <= 0) return 0;
++    /* A short probe window until two consecutive wins earn the full one;
++     * long-waiting threads keep probing briefly and never spin in earnest. */
++    if (msync_spin_wins >= 2) return iterations;
++    return iterations < 16 ? iterations : 16;
++}
++
++static inline void msync_spin_win(void)
++{
++    if (msync_spin_wins < 3) msync_spin_wins++;
++}
++
++static inline void msync_spin_lose(void)
++{
++    msync_spin_wins = 0;
++}
++
++/* The check from the top of msync_wait_single's loop, so the spin tests the
++ * same predicate the blocking loop would. FALSE leaves *wait_val holding the
++ * old value to present to ulock_wait. */
++static inline BOOLEAN msync_single_satisfied( void *obj_shm, int tid, int *wait_val )
++{
++    int val = 0;
++
++    if (((struct mutex *)obj_shm)->msync_type == MSYNC_MUTEX)
++    {
++        val = __atomic_load_n( (int *)obj_shm, __ATOMIC_ACQUIRE );
++        if (!val || val == ~0)
++            val = tid;
++    }
++    *wait_val = val;
++    /* Satisfied once the word no longer holds the value this thread would
++     * sleep on: free (0) or abandoned (~0) for a mutex, nonzero (signaled)
++     * for an event or semaphore. */
++    return __atomic_load_n( (int *)obj_shm, __ATOMIC_ACQUIRE ) != val;
++}
++
+ /*
+  * Faster to directly do the syscall and inline everything, taken and slightly adapted
+  * from xnu/libsyscall/mach/mach_msg.c
+@@ -301,19 +372,27 @@ static inline void server_remove_wait( unsigned int msgh_id, const int *objs, vo
+ static inline NTSTATUS msync_wait_single( int obj, void *obj_shm,
+                                           ULONGLONG *end, int tid )
+ {
++    unsigned int spin_iters = msync_spin_iters_for();
+     int ret, val = 0;
+     ULONGLONG ns_timeleft = 0;
+ 
+-    do 
++    if (spin_iters)
+     {
+-        if (((struct mutex *)obj_shm)->msync_type == MSYNC_MUTEX)
++        while (spin_iters--)
+         {
+-            val = __atomic_load_n( (int *)obj_shm, __ATOMIC_ACQUIRE );
+-            if (!val || val == ~0)
+-                val = tid;
++            if (msync_single_satisfied( obj_shm, tid, &val ))
++            {
++                msync_spin_win();
++                return STATUS_PENDING;
++            }
++            msync_pause();
+         }
++        msync_spin_lose();
++    }
+ 
+-        if (__atomic_load_n( (int *)obj_shm, __ATOMIC_ACQUIRE ) != val)
++    do
++    {
++        if (msync_single_satisfied( obj_shm, tid, &val ))
+             return STATUS_PENDING;
+ 
+         if (end)

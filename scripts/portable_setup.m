@@ -154,7 +154,12 @@ static NSMutableDictionary *wineEnv(NSString *engine) {
     [env addEntriesFromDictionary:@{@"PATH":@"/usr/bin:/bin:/usr/sbin:/sbin",@"HOME":join(root,@"home"),@"USER":@"player",
         @"TMPDIR":join(root,@"tmp"),@"WINEPREFIX":join(root,@"environment"),@"WINEARCH":@"win64",
         @"WINESERVER":join(engine,@"bin/wineserver"),@"WINELOADER":join(engine,@"bin/wine"),
-        @"WINEDEBUG":@"-all",
+        // Everything the game and its Windows programs produce stays in the
+        // data folder: errors and Wine's exception trail land in the wine-*.log
+        // files (wineTask below), while the app-only channels stay quiet.
+        // +timestamp prefixes every line with Wine's monotonic clock so a
+        // freeze can be time-correlated against the DXMT frame log.
+        @"WINEDEBUG":@"-all,err+all,+seh,+timestamp",
         @"CX_APPLEGPTK_LIBD3DSHARED_PATH":join(engine,@"lib/external/libd3dshared.dylib"),
         @"DXMT_SHADER_CACHE_PATH":join(root,@"cache/shaders"),@"DXMT_LOG_LEVEL":@"error",@"DXMT_LOG_PATH":@"none",
         @"DXMT_CONFIG_FILE":[@"Z:" stringByAppendingString:[([fm fileExistsAtPath:join(root,@"dxmt.conf")]?join(root,@"dxmt.conf"):join(engine,@"config/dxmt.conf")) stringByReplacingOccurrencesOfString:@"/" withString:@"\\"]],
@@ -168,6 +173,29 @@ static NSTask *task(NSString *executable, NSArray *args, NSDictionary *env, NSSt
     NSString *log=join(join(root,@"logs"),logname);
     if(![fm fileExistsAtPath:log]) [fm createFileAtPath:log contents:nil attributes:@{NSFilePosixPermissions:@0600}];
     NSFileHandle *out=[NSFileHandle fileHandleForWritingAtPath:log];[out truncateFileAtOffset:0];
+    p.standardOutput=out;p.standardError=out;
+    if(![p launchAndReturnError:nil]) fail(@"process_launch_failed");
+    return p;
+}
+/* Wine's stderr goes to logs/wine-<kind>.log, appended across launches so a
+ * crash session arrives with everything before it. When a file passes the
+ * cap it becomes <name>.1 and a fresh file starts; one generation retained.
+ * No setup stage reads these names. */
+static NSFileHandle *wineFileHandle(NSString *name) {
+    NSString *log=join(join(root,@"logs"),name);
+    if([fm fileExistsAtPath:log] && [[fm attributesOfItemAtPath:log error:nil][NSFileSize] unsignedLongLongValue] > (32ULL<<20)) {
+        NSString *older=join(join(root,@"logs"),[name stringByAppendingString:@".1"]);
+        [fm removeItemAtPath:older error:nil];
+        [fm moveItemAtPath:log toPath:older error:nil];
+    }
+    if(![fm fileExistsAtPath:log]) [fm createFileAtPath:log contents:nil attributes:@{NSFilePosixPermissions:@0600}];
+    return [NSFileHandle fileHandleForWritingAtPath:log];
+}
+static NSTask *wineTask(NSString *executable, NSArray *args, NSDictionary *env, NSString *logname) {
+    NSTask *p=[NSTask new];p.executableURL=[NSURL fileURLWithPath:executable];p.arguments=args;
+    if(env)p.environment=env;
+    p.currentDirectoryURL=[NSURL fileURLWithPath:root];
+    NSFileHandle *out=wineFileHandle([@"wine-" stringByAppendingString:logname]);
     p.standardOutput=out;p.standardError=out;
     if(![p launchAndReturnError:nil]) fail(@"process_launch_failed");
     return p;
@@ -189,7 +217,7 @@ static int waitTaskTicking(NSTask *p, double seconds, void (^tick)(void)) {
 static int waitTask(NSTask *p, double seconds) { return waitTaskTicking(p,seconds,nil); }
 static BOOL busy(NSString *engine) {
     if(![fm fileExistsAtPath:join(root,@"environment")]) return NO;
-    NSTask *p=task(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"server-check.log");
+    NSTask *p=wineTask(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"server-check.log");
     // A newly signed x86_64 server may need first-launch Rosetta translation.
     // A subsecond deadline falsely classified that startup as a running game.
     int result=waitTask(p,5);
@@ -380,8 +408,8 @@ static void prepare(void) {
     saveStage(@"preparing_environment");ownedPreparation=YES;
     // Update registry/drivers without running installed clients' login startup
     // entries. Battle.net must be opened by launchClient with its CEF options.
-    if(waitTask(task(join(engine,@"bin/wine"),@[@"wineboot.exe",@"-u",@"-r"],wineEnv(engine),@"wineboot.log"),180))fail(@"environment_initialization_failed");
-    if(waitTask(task(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"wineboot-wait.log"),60))fail(@"environment_initialization_busy");
+    if(waitTask(wineTask(join(engine,@"bin/wine"),@[@"wineboot.exe",@"-u",@"-r"],wineEnv(engine),@"wineboot.log"),180))fail(@"environment_initialization_failed");
+    if(waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"wineboot-wait.log"),60))fail(@"environment_initialization_busy");
     if(![fm fileExistsAtPath:join(prefix,@"system.reg")])fail(@"environment_registry_missing");
     configureRetina();
     // The player's network and Korean account choices (portable_network.h, portable_korea.h)
@@ -407,7 +435,7 @@ static void installClient(NSString *installer, NSString *expected) {
     configureProxy(engine,proxyDetectionChosen());
     if(cjkFontsChosen())configureFonts(engine,YES);
     saveStage(@"installing_battlenet");
-    NSTask *p=task(join(engine,@"bin/wine"),@[installer,[@"--lang=" stringByAppendingString:battleNetLanguage()]],battleNetSize(wineEnv(engine),installer),@"battlenet-installer.log");
+    NSTask *p=wineTask(join(engine,@"bin/wine"),@[installer,[@"--lang=" stringByAppendingString:battleNetLanguage()]],battleNetSize(wineEnv(engine),installer),@"battlenet-installer.log");
     event(@"battlenet_installer_open",@{@"pid":@(p.processIdentifier)});
 }
 static NSString *helperPath(NSString *name) {
@@ -497,8 +525,8 @@ static void prepareAfterSession(void) {
 static void closeClient(NSString *gameRunning);
 // Ends whatever is left of the Wine session (the update Agent, Wine's own services).
 static void endSession(NSString *engine) {
-    waitTask(task(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"session-end.log"),15);
-    if(waitTask(task(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"session-end-wait.log"),15))fail(@"client_close_failed");
+    waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"session-end.log"),15);
+    if(waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"session-end-wait.log"),15))fail(@"client_close_failed");
 }
 /* Battle.net (Qt around Chromium) lays itself out for the DPI Windows reports. Wine's
  * Retina mode (configureRetina) is one switch for every display: while the main display
@@ -613,7 +641,7 @@ static void deleteShaders(void) {
     applyShaderMemory();
     event(@"shaders_deleted",nil);
 }
-static void launchClient(BOOL diagnostic, BOOL play, BOOL sized, BOOL hud, BOOL gameMode, BOOL metalfx, NSString *sharpening) {
+static void launchClient(BOOL diagnostic, BOOL play, BOOL sized, BOOL hud, BOOL gameMode, BOOL metalfx, NSString *sharpening, NSString *wineDebug) {
     requireRosetta();
     NSString *engine=runtime();if(![fm fileExistsAtPath:clientPath()])fail(@"battlenet_not_installed");
     // Before anything else: an Overwatch started from a Battle.net already open reads it too.
@@ -637,7 +665,7 @@ static void launchClient(BOOL diagnostic, BOOL play, BOOL sized, BOOL hud, BOOL 
         // Overwatch reads its default microphone when it starts; one already running keeps its own.
         if(!game)configureVoiceMicrophone(engine,nil,YES,NO);
         // Battle.net already open carries its own environment; this hands over the command only.
-        if(play && !game)task(join(engine,@"bin/wine"),client,clientEnvironment(wineEnv(engine),sized,hud,gameMode,NO),@"battlenet-play.log");
+        if(play && !game)wineTask(join(engine,@"bin/wine"),client,clientEnvironment(wineEnv(engine),sized,hud,gameMode,NO),@"battlenet-play.log");
         if(!game)task(NSProcessInfo.processInfo.arguments[0],watchArguments(engine,gameMode),nil,[NSString stringWithFormat:@"client-monitor-%d.log",getpid()]);
         return;
     }
@@ -681,7 +709,19 @@ static void launchClient(BOOL diagnostic, BOOL play, BOOL sized, BOOL hud, BOOL 
     configureVoiceMicrophone(engine,nil,YES,YES);
     if(displays) {NSMutableDictionary *s=state();s[@"session_displays"]=displays;writeJSON(s,join(root,@"state.json"));}
     NSDictionary *env=clientEnvironment(diagnostic?diagnosticEnvironment(engine):wineEnv(engine),sized,hud,gameMode,metalfx);
-    NSTask *p=task(join(engine,@"bin/wine"),client,env,@"battlenet.log");
+    // launch --wine-debug "...": deepen the capture for one session. The value
+    // only becomes the WINEDEBUG environment entry of the one wine process it
+    // launches, so a simple character whitelist (channel names, +- classes,
+    // commas, '=' plus digits) keeps any channel out. Bad values are refused.
+    if(wineDebug) {
+        if(!matches(wineDebug,@"[A-Za-z0-9_=,+-]+") || wineDebug.length>512)fail(@"invalid_wine_debug");
+    }
+    {
+        NSMutableDictionary *mutable=[env mutableCopy];
+        if(wineDebug)mutable[@"WINEDEBUG"]=wineDebug;
+        env=mutable;
+    }
+    NSTask *p=wineTask(join(engine,@"bin/wine"),client,env,@"battlenet.log");
     saveStage(@"battlenet_started");event(@"battlenet_open",@{@"pid":@(p.processIdentifier)});
     task(NSProcessInfo.processInfo.arguments[0],watchArguments(engine,gameMode),nil,[NSString stringWithFormat:@"client-monitor-%d.log",getpid()]);
 }
@@ -717,7 +757,7 @@ static void closeClient(NSString *gameRunning) {
         for(NSDictionary *p in rows) {if([p[@"kind"] isEqual:@"game"])fail(gameRunning);[clients addObject:p];}
         if(!clients.count) {closed=YES;break;}
         if(attempt==0) {event(@"closing_client",nil);for(NSDictionary *p in clients)kill([p[@"pid"] intValue],SIGTERM);}
-        else if(attempt==10)waitTask(task(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"client-stop.log"),15);
+        else if(attempt==10)waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"client-stop.log"),15);
         [NSThread sleepForTimeInterval:1];
     }
     if(!closed)fail(@"client_close_failed");
@@ -851,8 +891,8 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
         // --metal-hud 1 shows Apple's Metal Performance HUD over Overwatch (Settings); off by default.
         // --game-mode 0 starts Overwatch without macOS Game Mode (hidden app default); on by default.
         // --metalfx 1 offers DLSS on MetalFX, with --sharpening off|low|high (Settings); off by default.
-        else if([command isEqual:@"launch"])launchClient(NO,[options[@"play"] isEqual:@"1"],![options[@"battlenet-scale"] isEqual:@"1"],[options[@"metal-hud"] isEqual:@"1"],![options[@"game-mode"] isEqual:@"0"],[options[@"metalfx"] isEqual:@"1"],options[@"sharpening"] ?: @"off");
-        else if([command isEqual:@"diagnostic-launch"])launchClient(YES,NO,![options[@"battlenet-scale"] isEqual:@"1"],[options[@"metal-hud"] isEqual:@"1"],![options[@"game-mode"] isEqual:@"0"],[options[@"metalfx"] isEqual:@"1"],options[@"sharpening"] ?: @"off");
+        else if([command isEqual:@"launch"])launchClient(NO,[options[@"play"] isEqual:@"1"],![options[@"battlenet-scale"] isEqual:@"1"],[options[@"metal-hud"] isEqual:@"1"],![options[@"game-mode"] isEqual:@"0"],[options[@"metalfx"] isEqual:@"1"],options[@"sharpening"] ?: @"off",options[@"wine-debug"]);
+        else if([command isEqual:@"diagnostic-launch"])launchClient(YES,NO,![options[@"battlenet-scale"] isEqual:@"1"],[options[@"metal-hud"] isEqual:@"1"],![options[@"game-mode"] isEqual:@"0"],[options[@"metalfx"] isEqual:@"1"],options[@"sharpening"] ?: @"off",options[@"wine-debug"]);
         // Support and tests: what a launch with --enabled 0|1 (and --sharpening) sets up for MetalFX
         // upscaling (portable_metalfx.h); --apply 0 only reports.
         else if([command isEqual:@"metalfx"]) {
@@ -865,7 +905,7 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
         else if([command isEqual:@"parity-report"])event(@"parity_report",parityReport(runtime(),wineEnv(runtime())));
         else if([command isEqual:@"uninstall"])uninstall();
         else if([command isEqual:@"discard-unused"])discardUnused();
-        else if([command isEqual:@"stop"]) {NSString *engine=runtime();int code=waitTask(task(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"stop.log"),15);if(code!=0 && code!=1)fail(@"stop_failed");event(@"environment_stopped",nil);}
+        else if([command isEqual:@"stop"]) {NSString *engine=runtime();int code=waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"stop.log"),15);if(code!=0 && code!=1)fail(@"stop_failed");event(@"environment_stopped",nil);}
         else fail(@"unknown_command");
         if(lockFD>=0)close(lockFD);return 0;
     } @catch(NSException *exception) {
@@ -873,7 +913,7 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
             // There was no client/game when this preparation began. Stop only
             // the helper processes it started in this owned environment.
             cancelRequested=0;
-            @try { NSString *engine=runtime();waitTask(task(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"cancel-prepare.log"),15);waitTask(task(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"cancel-wait.log"),15); } @catch(NSException *ignored) { (void)ignored; }
+            @try { NSString *engine=runtime();waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-k"],wineEnv(engine),@"cancel-prepare.log"),15);waitTask(wineTask(join(engine,@"bin/wineserver"),@[@"-w"],wineEnv(engine),@"cancel-wait.log"),15); } @catch(NSException *ignored) { (void)ignored; }
         }
         event(@"error",@{@"code":[exception.name isEqual:@"SetupError"]?exception.reason:@"unexpected_setup_error"});
         if(lockFD>=0)close(lockFD);return 1;

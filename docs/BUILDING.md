@@ -29,9 +29,14 @@ Extract the Wine source and apply, once each and in this order,
 `patches/wine-v1-canvas.patch`, `patches/wine-mouselook.patch`,
 `patches/wine-portable-directory-boolean.patch`, Soju's
 `ncrypt-persisted-keys.patch`, `patches/wine-server-registry-save.patch`,
-`patches/wine-ntdll-syscall-log.patch`, `patches/wine-win32u-display-log.patch`
-and `patches/wine-winemac-activation.patch`. `build_portable_dxmt.py` and
-`build_portable_runtime.py` apply them for you and check each one's SHA-256.
+`patches/wine-ntdll-syscall-log.patch`, `patches/wine-win32u-display-log.patch`,
+`patches/wine-winemac-activation.patch`, `patches/wine-msync-spin.patch` and
+`patches/wine-fast-yield.patch`. The last two carry the sync behavior the
+shipped launch environment turns on (WINE_MSYNC_SPIN=64, WINE_FAST_YIELD=1);
+the launcher flags `--no-msync-spin` and `--no-fast-yield` disable them for
+A/B comparisons.
+`build_portable_dxmt.py` and `build_portable_runtime.py` apply them for you
+and check each one's SHA-256.
 The two `v1` filenames identify the complete integration patches; do not layer
 older candidate patches on them.
 
@@ -121,6 +126,7 @@ python3 scripts/build_portable_dxmt.py --workspace runtime/phase-2 --jobs 2
 python3 scripts/build_portable_setup.py --output runtime/phase-2/native/ow2-setup
 python3 scripts/assemble_portable_runtime.py --workspace runtime/phase-2
 python3 scripts/build_native_app.py --output runtime/build/Recall.app
+python3 scripts/build_and_test_app.py --output runtime/build/Recall-selftest.app
 python3 -m venv runtime/tools/dmgbuild && runtime/tools/dmgbuild/bin/python -m pip install dmgbuild==1.6.5
 runtime/tools/dmgbuild/bin/python scripts/build_release_dmg.py --app runtime/build/Recall.app \
     --output runtime/release/Recall-1.0.0.dmg --identity "Developer ID Application: ..."

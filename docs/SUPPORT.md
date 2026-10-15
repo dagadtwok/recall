@@ -17,6 +17,11 @@ in the app. Include:
 - macOS version
 - Game resolution
 - What you did, and whether it happened on a fresh launch or after Cmd-Tab
+- When deeper context helps, the app's data folder also has a `logs` folder.
+  Its `wine-battlenet.log` files (plus a rotated `.1` once one passes 32 MB)
+  collect Battle.net's and Overwatch's stderr — Wine's error channels and,
+  at a crash, Wine's structured-exception trail. Attach the last lines of
+  the newest one when the game crashes.
 
 Remove account names and personal file paths before posting.
 
