@@ -211,7 +211,10 @@ struct AfterMatchStatus:View {
             if let fraction { ProgressRing(fraction:fraction).accessibilityHidden(true) }
             else { ProgressView().controlSize(.small).accessibilityHidden(true) }
             VStack(alignment:.leading,spacing:2) {
-                Text((updating ? L("Updating your shader cache") : L("Preparing shaders from your last match"))+(fraction.map { " · "+($0 >= 1 ? L("Finishing up") : "\(Int($0*100))%") } ?? ""))
+                let heading=updating ? L("Updating your shader cache") : L("Preparing shaders from your last match")
+                let percent=fraction.map { $0 >= 1 ? L("Finishing up") : "\(Int($0*100))%" }
+                let progressLabel=percent.map { " · "+$0 } ?? ""
+                Text(heading+progressLabel)
                     .font(LauncherStyle.font(13,.semibold)).monospacedDigit()
                 Text(sentences(progress.map { L("{0} of {1} ready.",$0.ready.formatted(),$0.learned.formatted()) } ?? "",
                                updating ? L("This one-time update keeps going if you quit {0}.",Brand.name) : L("This keeps going if you quit {0}.",Brand.name),

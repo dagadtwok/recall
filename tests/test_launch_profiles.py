@@ -116,6 +116,60 @@ class LaunchProfiles(unittest.TestCase):
         self.assertIn("DXMT_FRAME_LOG", env)
         self.assertNotEqual(env["DXMT_LOG_PATH"], "none")
 
+    def test_sync_is_on_by_default_and_opt_out_for_ab(self):
+        # Plain d3dmetal shows the base env rules; the DXMT config branch is
+        # covered by the other profile tests against a staged runtime.
+        prefix = ROOT / "runtime/prefix-cx26"
+        inherited = {"WINE_MSYNC_SPIN": "stale", "WINE_FAST_YIELD": "stale"}
+        with patch.dict(os.environ, inherited):
+            default = launch.build_environment("d3dmetal", launch.ENGINE, prefix)
+            outs = launch.build_environment("d3dmetal", launch.ENGINE, prefix,
+                                            msync_spin=0, fast_yield=False)
+        self.assertEqual(default["WINE_MSYNC_SPIN"], "64")
+        self.assertEqual(default["WINE_FAST_YIELD"], "1")
+        self.assertNotIn("WINE_MSYNC_SPIN", outs)
+        self.assertNotIn("WINE_FAST_YIELD", outs)
+        with self.assertRaises(ValueError):
+            launch.build_environment("d3dmetal", launch.ENGINE, prefix, msync_spin=16385)
+        with self.assertRaises(ValueError):
+            launch.build_environment("d3dmetal", launch.ENGINE, prefix, msync_spin=-1)
+
+    def test_prewarm_limit_defaults_to_the_shipping_value(self):
+        engine = ROOT / "runtime/soju-engine-dxmt-local"
+        prefix = ROOT / "runtime/prefix-dxmt-local"
+        if not (engine / "lib/wine/x86_64-unix/winemetal.so").is_file():
+            self.skipTest("The staged DXMT runtime is not installed; the "
+                          "pipeline-cache branch needs it (see config/dxmt-source60-1200.conf).")
+        default = launch.build_environment("dxmt", engine, prefix, profile="smooth60",
+                                           source_build=True)
+        wider = launch.build_environment("dxmt", engine, prefix, profile="smooth60",
+                                         source_build=True, prewarm_limit=256)
+        self.assertEqual(default["DXMT_PIPELINE_CACHE_PREWARM_LIMIT"], "128")
+        self.assertEqual(wider["DXMT_PIPELINE_CACHE_PREWARM_LIMIT"], "256")
+        with self.assertRaises(ValueError):
+            launch.build_environment("d3dmetal", launch.ENGINE, launch.PREFIX, prewarm_limit=0)
+        with self.assertRaises(ValueError):
+            launch.build_environment("d3dmetal", launch.ENGINE, launch.PREFIX, prewarm_limit=5000)
+
+    def test_sync_patch_state_reports_what_the_engine_compiles_in(self):
+        import tempfile
+        (ROOT / "runtime/diagnostics").mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / "runtime/diagnostics") as tmp:
+            engine = Path(tmp)
+            (engine / "lib/wine/x86_64-unix").mkdir(parents=True)
+            empty = launch.sync_patch_state(engine)
+            self.assertEqual(empty["found"], {"WINE_MSYNC_SPIN": False, "WINE_FAST_YIELD": False})
+            self.assertEqual(empty["checked"], [])
+            lib = engine / "lib/wine/x86_64-unix/l_ntdll.so"
+            lib.write_bytes(b"MACH Trampoline\x00" + b"WINE_MSYNC_SPIN\x00" + b"padding")
+            partial = launch.sync_patch_state(engine)
+            self.assertTrue(partial["found"]["WINE_MSYNC_SPIN"])
+            self.assertFalse(partial["found"]["WINE_FAST_YIELD"])
+            lib.write_bytes(lib.read_bytes() + b"WINE_FAST_YIELD\x00")
+            full = launch.sync_patch_state(engine)
+            self.assertTrue(all(full["found"].values()))
+            self.assertEqual(full["checked"], ["l_ntdll.so"])
+
     def test_resource_capture_excludes_game_from_other_engine(self):
         def command(*args):
             if args[0] == "vm_stat":

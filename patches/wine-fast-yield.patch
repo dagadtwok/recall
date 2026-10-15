@@ -1,0 +1,41 @@
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index b05b91b..59e2ef0 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -2542,12 +2542,36 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
+ }
+ 
+ 
++/* Recall (2026-10-16): WINE_FAST_YIELD=1 makes NtYieldExecution a plain
++ * sched_yield(). Wine's version runs getrusage(RUSAGE_THREAD) on each side
++ * of the yield, a proc_info system call each time, only to report
++ * STATUS_NO_YIELD_PERFORMED — a status callers like SwitchToThread cannot
++ * use. Callers that do read the status must not set the variable. */
++static inline int yield_fast(void)
++{
++    static int cache = -1;
++
++    if (cache < 0)
++    {
++        const char *value = getenv( "WINE_FAST_YIELD" );
++
++        cache = value && atoi( value ) > 0;
++    }
++    return cache;
++}
++
+ /******************************************************************
+  *		NtYieldExecution (NTDLL.@)
+  */
+ NTSTATUS WINAPI NtYieldExecution(void)
+ {
+ #ifdef HAVE_SCHED_YIELD
++
++    if (yield_fast())
++    {
++        sched_yield();
++        return STATUS_SUCCESS;
++    }
+ #ifdef RUSAGE_THREAD
+     struct rusage u1, u2;
+     int ret;

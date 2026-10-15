@@ -84,11 +84,42 @@ def memory_report(preflight):
     return line
 
 
+SYNC_PATCH_ENVS = ('WINE_MSYNC_SPIN', 'WINE_FAST_YIELD')
+
+
+def sync_patch_state(engine, envs=SYNC_PATCH_ENVS):
+    """Which sync variables this staged engine build actually implements.
+
+    Every patch embeds its variable name as a string literal in the unix
+    library that reads it, so a byte scan over the engine's binaries
+    distinguishes an engine that carries a patch from one where the variable
+    is silently inert. Scan is cheap and needs no Wine run.
+    """
+    found = {name: False for name in envs}
+    checked = []
+    directory = engine / 'lib/wine/x86_64-unix'
+    candidates = (list(directory.glob('*.so')) if directory.is_dir() else [])+\
+                 ([engine / 'bin/wineserver'] if (engine / 'bin/wineserver').is_file() else [])
+    for path in candidates:
+        checked.append(path.name)
+        for name in envs:
+            if not found[name]:
+                try:
+                    needle = name.encode()
+                    with open(path, 'rb') as stream:
+                        if needle in stream.read():
+                            found[name] = True
+                except OSError:
+                    continue
+    return dict(found=found, checked=checked)
+
+
 def build_environment(backend, engine, prefix, *, profile="baseline", performance=False,
                       no_msync=False, stamp=None, source_build=False, measure=False,
                       pipeline_cache=True, pipeline_prewarm=True, resolution=1080,
                       drawables=CANVAS_DRAWABLES_DEFAULT, pacing=False, framebuffer_only=False,
-                      overlay=False, trace_resources=False):
+                      overlay=False, trace_resources=False, msync_spin=64, fast_yield=True,
+                      prewarm_limit=128):
     """Explicit session environment, also used by isolated graphics diagnostics."""
     if measure and (backend != "dxmt" or not source_build):
         raise ValueError("Measured capture requires the local DXMT source build.")
@@ -98,6 +129,10 @@ def build_environment(backend, engine, prefix, *, profile="baseline", performanc
         raise ValueError("Resource tracing requires measured capture.")
     if drawables not in (2, 3):
         raise ValueError("The fullscreen canvas layer supports two or three drawables.")
+    if not 0 <= msync_spin <= 16384:
+        raise ValueError("The MSync spin window is 0 (off) to 16384 iterations.")
+    if not 1 <= prewarm_limit <= 4096:
+        raise ValueError("The pipeline prewarm limit is 1 to 4096 pipelines.")
     env = os.environ.copy()
     for key in list(env):
         if key.startswith(("DXMT_", "MTL_HUD_")) or key in (
@@ -116,6 +151,18 @@ def build_environment(backend, engine, prefix, *, profile="baseline", performanc
         CX_APPLEGPTK_LIBD3DSHARED_PATH=str(engine / "lib/external/libd3dshared.dylib"),
         DYLD_FALLBACK_LIBRARY_PATH=str(engine / "lib") + ":/usr/lib",
     )
+    # Sync behavior is on by default (see patches/wine-msync-spin.patch and
+    # patches/wine-fast-yield.patch and the candidate contract); disabling it
+    # via the launch flags must also strip a stale inherited value, so an A/B
+    # run is really a run without the experiment.
+    if msync_spin:
+        env["WINE_MSYNC_SPIN"] = str(msync_spin)
+    else:
+        env.pop("WINE_MSYNC_SPIN", None)
+    if fast_yield:
+        env["WINE_FAST_YIELD"] = "1"
+    else:
+        env.pop("WINE_FAST_YIELD", None)
     if backend == "dxmt":
         config_name = "dxmt-ow2.conf"
         if profile == "smooth60":
@@ -156,7 +203,7 @@ def build_environment(backend, engine, prefix, *, profile="baseline", performanc
                 DXMT_PIPELINE_CACHE_PATH=str(ROOT / "runtime/dxmt-pipeline-cache-source"),
                 DXMT_PIPELINE_CACHE_NAMESPACE="ow2-source-v1",
                 DXMT_PIPELINE_CACHE_PREWARM_MS="10000" if pipeline_prewarm else "0",
-                DXMT_PIPELINE_CACHE_PREWARM_LIMIT="128",
+                DXMT_PIPELINE_CACHE_PREWARM_LIMIT=str(prewarm_limit),
                 DXMT_PIPELINE_CACHE_PREFER_EXPENSIVE="1",
             )
         if performance:
@@ -435,6 +482,12 @@ def main():
                         help='Mark the presentation layer framebuffer-only (Core Animation flip eligibility experiment).')
     parser.add_argument('--frame-cap', type=int,
                         help='Explicitly set the saved game FPS limit (30..600; 600 is the game ceiling). Omit to preserve your in-game choice.')
+    parser.add_argument('--no-msync-spin', action='store_true',
+                        help='Disable the MSync spin window (on by default, 64 iterations) for an A/B comparison.')
+    parser.add_argument('--no-fast-yield', action='store_true',
+                        help='Disable WINE_FAST_YIELD (on by default) for an A/B comparison of NtYieldExecution cost.')
+    parser.add_argument('--prewarm-limit', type=int, default=128, metavar='N',
+                        help='Pipeline pack prewarm limit for the source build (A/B experiment; 128 is the shipping value).')
     args = parser.parse_args()
     if args.resolution and not (args.source_build and args.profile == 'smooth60'):
         parser.error('--resolution requires --source-build --profile smooth60')
@@ -466,10 +519,21 @@ def main():
                             pipeline_cache=not args.no_pipeline_cache,
                             pipeline_prewarm=not args.no_pipeline_prewarm,resolution=args.resolution or 1080,
                             drawables=args.drawables, pacing=args.pacing, framebuffer_only=args.framebuffer_only,
-                            overlay=args.overlay, trace_resources=args.trace_resources)
+                            overlay=args.overlay, trace_resources=args.trace_resources,
+                            msync_spin=0 if args.no_msync_spin else 64,
+                            fast_yield=not args.no_fast_yield,
+                            prewarm_limit=args.prewarm_limit)
+    sync_patch = sync_patch_state(engine)
+    inert = [name for name in SYNC_PATCH_ENVS if env.get(name) and not sync_patch['found'][name]]
+    if inert:
+        print('WARNING: this engine build predates ' + ', '.join(inert) +
+              '; the variable is set but its behavior is not compiled in ('
+              + ', '.join(sync_patch['checked'] or ['no engine binaries found']) + ').', flush=True)
     preflight = memory_preflight()
     if args.check:
         print(f"Canvas overlay window: {env.get('DXMT_CANVAS_OVERLAY', 'driver default')}")
+        print(f"Sync experiments: msync_spin={env.get('WINE_MSYNC_SPIN', 'off')}; fast_yield={env.get('WINE_FAST_YIELD', 'off')}")
+        print(f"Engine sync patch compiled: {sorted(k for k, v in sync_patch['found'].items() if v)} in {sync_patch['checked'] or 'no engine binaries'}")
         print(memory_report(preflight))
         print(f"Validated {args.backend}: engine={engine.name}, prefix={prefix.name}")
         print(f"Profile: {args.profile}; msync={env['WINEMSYNC']}; diagnostics={args.performance}; measurement={args.measure}")
@@ -522,6 +586,10 @@ def main():
                     memory_preflight=preflight,
                     translator_extra_config=env.get("DXMT_CONFIG"),
                     present_pacing=bool(args.pacing), framebuffer_only=bool(args.framebuffer_only),
+                    sync_experiments=dict(msync_spin=env.get("WINE_MSYNC_SPIN", "0"),
+                                          fast_yield=bool(env.get("WINE_FAST_YIELD"))),
+                    engine_sync_patch=dict(compiled=[name for name, ok in sync_patch['found'].items() if ok],
+                                           binaries=sync_patch['checked']),
                     frame_rate_cap=(selected_preferences or {}).get("frame_rate_cap"),
                     battlenet_exit_on_launch=dict(enabled=not args.keep_battlenet),
                     session_conditions=dict(power=power_state(), background_processes=background_snapshot()))

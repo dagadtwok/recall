@@ -44,6 +44,8 @@
   "environment": {
     "WINEMSYNC": "1",
     "WINEESYNC": "0",
+    "WINE_MSYNC_SPIN": "64",
+    "WINE_FAST_YIELD": "1",
     "ROSETTA_ADVERTISE_AVX": "1",
     "WINE_SIMULATE_WRITECOPY": "1",
     "CX_ACTIVE_GRAPHICS_BACKEND": "dxmt",

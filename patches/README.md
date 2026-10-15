@@ -135,6 +135,25 @@ patches above:
   without the variable the call fails as before.
 `WINEMAC_INPUT_STATS` writes an input report (off unless set).
 
+`wine-msync-spin.patch` applies on top of every patch above (it touches no
+file they do): MSync re-reads the shared-memory word a little longer before
+its sleep in `msync_wait_single`, so a signal that lands in that window
+settles a wait with no mach sleep+wake pair. A thread whose waits keep
+outlasting the spin is throttled to a short probe; two settled-in-spin waits
+in a row earn the full window. Timeouts are still honored. On by default at
+64 iterations (the shipped launch environment sets `WINE_MSYNC_SPIN`); the
+launcher flag `--no-msync-spin` turns it off for an A/B comparison.
+`tests/msync_spin` compiles the patch's helpers into a host harness and
+checks the state machine and the satisfied predicate.
+
+`wine-fast-yield.patch` applies last (no shared files with any patch above):
+`NtYieldExecution` skips the two `getrusage(RUSAGE_THREAD)` calls Wine uses to
+report STATUS_NO_YIELD_PERFORMED and yields directly, when
+`WINE_FAST_YIELD=1` is set — which the shipped launch environment does. The
+status distinguishes "nothing yielded"; callers that read it must not set the
+variable. The launcher flag `--no-fast-yield` turns it off for an A/B
+comparison.
+
 Menus, Battle.net and every other program keep the standard behavior.
 
 Apply each patch once, in this order, first using `git apply --check`.

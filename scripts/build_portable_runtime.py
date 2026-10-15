@@ -76,6 +76,8 @@ V1_PATCHES = {
     'wine-ntdll-syscall-log.patch': 'beac5bba576e36a0971e6581e812817e87f5cb8c41003c2e4edfe0e8f269623a',
     'wine-win32u-display-log.patch': '2387fa06d76891b7b5981473bb06b3b939e2c7569f79b6e3a7cbf12c21297568',
     'wine-winemac-activation.patch': '5cce039910a420a16e7d9f8907e17206b1413c6cc4092248548d3d6b29f1138d',
+    'wine-msync-spin.patch': 'f53a27cb00a63b4a500fe75fe44ca513c237a14f0801f64f68b4c5e64fca8c33',
+    'wine-fast-yield.patch': '98836b8056b3fa185ad296a253534abef042bf49e77e84eb183b8e7850e4b348',
 }
 
 
@@ -126,7 +128,10 @@ def build(work, tools, headers, jobs):
     # a forked server, Unix library loads outside the virtual-memory lock, the
     # window driver's activation, canvas and pointer fixes. Their diagnostics
     # (WINESERVER_REGISTRY_LOG, WINE_SYSCALL_LOG, WINE_IO_ERROR_LOG,
-    # WINE_DISPLAY_LOG, WINEMAC_INPUT_STATS) stay off unless set.
+    # WINE_DISPLAY_LOG, WINEMAC_INPUT_STATS) stay off unless set. The two sync
+    # patches below are the shipped defaults, enabled by the launch
+    # environment (WINE_MSYNC_SPIN=64, WINE_FAST_YIELD=1); the engine keeps
+    # its plain behavior whenever a variable is absent.
     for name, expected in V1_PATCHES.items():
         p = ROOT / 'patches' / name
         if sha(p) != expected:

@@ -42,24 +42,32 @@
    "additional_patch": "patches/wine-mouselook.patch",
    "additional_patch_sha256": "4e9d4ab2aff6ec38b03100d4802d2764efe1e33caf151cdb4c5de7a8dfa3dfdb",
    "additional_patch_applies_after": "patches/wine-v1-canvas.patch",
-   "v1_patches": [
-    {
-     "patch": "patches/wine-server-registry-save.patch",
-     "sha256": "8f89556d5daff60c75ae60720ae5125c68021abc244a95df5f6352468323a1a3"
-    },
-    {
-     "patch": "patches/wine-ntdll-syscall-log.patch",
-     "sha256": "beac5bba576e36a0971e6581e812817e87f5cb8c41003c2e4edfe0e8f269623a"
-    },
-    {
-     "patch": "patches/wine-win32u-display-log.patch",
-     "sha256": "2387fa06d76891b7b5981473bb06b3b939e2c7569f79b6e3a7cbf12c21297568"
-    },
-    {
-     "patch": "patches/wine-winemac-activation.patch",
-     "sha256": "5cce039910a420a16e7d9f8907e17206b1413c6cc4092248548d3d6b29f1138d"
-    }
-   ],
+    "v1_patches": [
+     {
+      "patch": "patches/wine-server-registry-save.patch",
+      "sha256": "8f89556d5daff60c75ae60720ae5125c68021abc244a95df5f6352468323a1a3"
+     },
+     {
+      "patch": "patches/wine-ntdll-syscall-log.patch",
+      "sha256": "beac5bba576e36a0971e6581e812817e87f5cb8c41003c2e4edfe0e8f269623a"
+     },
+     {
+      "patch": "patches/wine-win32u-display-log.patch",
+      "sha256": "2387fa06d76891b7b5981473bb06b3b939e2c7569f79b6e3a7cbf12c21297568"
+     },
+     {
+      "patch": "patches/wine-winemac-activation.patch",
+      "sha256": "5cce039910a420a16e7d9f8907e17206b1413c6cc4092248548d3d6b29f1138d"
+     },
+     {
+      "patch": "patches/wine-msync-spin.patch",
+      "sha256": "f53a27cb00a63b4a500fe75fe44ca513c237a14f0801f64f68b4c5e64fca8c33"
+     },
+     {
+      "patch": "patches/wine-fast-yield.patch",
+      "sha256": "98836b8056b3fa185ad296a253534abef042bf49e77e84eb183b8e7850e4b348"
+     }
+    ],
    "v1_patches_apply_after": "patches/wine-portable-directory-boolean.patch and Soju's ncrypt-persisted-keys.patch"
   },
   "soju": {
@@ -109,19 +117,23 @@
   "build_recipe_end_to_end_status": "not yet reconstructed from clean source",
   "macos_sdk": "Command Line Tools, macOS 26.5 SDK"
  },
- "runtime_policy": {
-  "drawables": 3,
-  "compiler_threads": 8,
-  "max_frame_latency": 1,
-  "overlay": false,
-  "pacing": {
-   "enabled": true,
-   "mode": 3,
-   "target_us": 1000
+  "runtime_policy": {
+   "drawables": 3,
+   "compiler_threads": 8,
+   "max_frame_latency": 1,
+   "overlay": false,
+   "pacing": {
+    "enabled": true,
+    "mode": 3,
+    "target_us": 1000
+   },
+   "sync": {
+    "msync_spin_iterations": 64,
+    "fast_yield": true
+   },
+   "fps": "player controlled",
+   "prepare_shaders": true
   },
-  "fps": "player controlled",
-  "prepare_shaders": true
- },
  "patches": [
   {
    "path": "patches/dxmt-v1-private.patch",
