@@ -31,7 +31,9 @@ Extract the Wine source and apply, once each and in this order,
 `ncrypt-persisted-keys.patch`, `patches/wine-server-registry-save.patch`,
 `patches/wine-ntdll-syscall-log.patch`, `patches/wine-win32u-display-log.patch`,
 `patches/wine-winemac-activation.patch`, `patches/wine-msync-spin.patch` and
-`patches/wine-fast-yield.patch`. The last two carry the sync behavior the
+`patches/wine-fast-yield.patch`, plus `patches/wine-audio-devices.patch`
+(the last carries the `WINEMAC_AUDIO_DEVICES` device-visibility switch;
+off by default). The two sync patches carry the sync behavior the
 shipped launch environment turns on (WINE_MSYNC_SPIN=64, WINE_FAST_YIELD=1);
 the launcher flags `--no-msync-spin` and `--no-fast-yield` disable them for
 A/B comparisons.

@@ -66,16 +66,18 @@ A Wine patch candidate in Recall's own stack, mirroring the
 driver so Overwatch sees exactly one named input/output pair on any Mac
 with many audio endpoints.
 
-*Status, October 16 2026, later session: the single-endpoint view is
-implemented as the Wine patch on the **`audio-device-filter` branch**
-(`WINEMAC_AUDIO_DEVICES` env → one endpoint per direction, off unless the
-variable is set). This branch carries the analysis that led to it. The
-second user report — the same freeze while playing with **AirPods** —
-removes any hardware-specific reading: Bluetooth endpoints switching
-hands-free/A2DP roles or output formats go through the exact same reinit
-cycle, so the single-endpoint view is the general fix. Validation needs a
-rebuilt engine carrying the patch; the hold switch stays the env var until
-the A/B: freeze reproduced on → kept on → freeze gone.*
+*Status, October 16 2026, later session: implemented as
+`patches/wine-audio-devices.patch` (env `WINEMAC_AUDIO_DEVICES=1` → one
+endpoint per direction, off unless the variable is set; applies cleanly
+to the pristine CX 26.3 tree;
+`scripts/build_portable_runtime.py` V1_PATCHES registered with sha256;
+`patches/README.md` and `docs/BUILDING.md` updated). The second user
+report — the same freeze while playing with **AirPods** — removes any
+hardware-specific reading: Bluetooth endpoints switching hands-free/A2DP
+roles or output formats go through the exact same reinit cycle, so the
+single-endpoint view is the general fix. Validating it needs a rebuilt
+engine (the chain is already wired over the freeze); the hold switch stays
+the env var until the A/B: freeze reproduced on → kept on → freeze gone.*
 
 ## Sources
 

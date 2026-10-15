@@ -1,0 +1,73 @@
+diff --git a/dlls/winecoreaudio.drv/coreaudio.c b/dlls/winecoreaudio.drv/coreaudio.c
+index 3199887..de2346c 100644
+--- a/dlls/winecoreaudio.drv/coreaudio.c
++++ b/dlls/winecoreaudio.drv/coreaudio.c
+@@ -223,6 +223,25 @@ static NTSTATUS unix_main_loop(void *args)
+     return STATUS_SUCCESS;
+ }
+ 
++/*
++ * Recall patch, 2026-10-16: Wine mac audio device visibility.
++ *
++ * Some games keep re-initializing their audio client when they see several
++ * endpoints change state around them (Vivox in Overwatch 2 across Season 18
++ * builds, and Bluetooth headphones switching between output formats or
++ * hands-free/A2DP roles). Those reinitializations stall the CoreAudio
++ * realtime client for seconds at a time, and the entire translated game
++ * process freezes at the same moment: every thread parks in the same ntdll
++ * host wait while coreaudiod floods its log with the endpoint's overload
++ * and ClientTimeout reports.
++ *
++ * When WINEMAC_AUDIO_DEVICES=1, unix_get_endpoint_ids below answers with
++ * exactly one endpoint per flow - this flow's system default device. The
++ * game then sees one stable endpoint pair for its whole run: device cycling
++ * has nothing left to switch to, and endpoint churn (plugging, Bluetooth
++ * role changes, third-party interfaces) cannot reach the game client. The
++ * default answer stays exactly as before when the variable is unset.
++ */
+ static NTSTATUS unix_get_endpoint_ids(void *args)
+ {
+     struct get_endpoint_ids_params *params = args;
+@@ -314,6 +333,42 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
+     }
+     free(devices);
+ 
++    /* Recall patch: WINEMAC_AUDIO_DEVICES=1 keeps only this flow's default
++     * device (or, should the system default not be enumerable, the first
++     * device we saw). One endpoint per flow means the game's own device list
++     * cannot cycle; anything else CoreAudio knows about stays invisible. */
++    {
++        static int single_endpoint = -1;
++
++        if (single_endpoint < 0)
++        {
++            const char *value = getenv("WINEMAC_AUDIO_DEVICES");
++
++            single_endpoint = value && !strcmp(value, "1");
++        }
++        if (single_endpoint)
++        {
++            unsigned int keep = 0;
++
++            for (i = 0; i < params->num; i++)
++            {
++                if (info[i].id == default_id)
++                {
++                    info[keep++] = info[i];
++                    break;
++                }
++            }
++            if (!keep && params->num)
++                info[keep++] = info[0];
++            for (i = keep; i < params->num; i++)
++            {
++                CFRelease(info[i].name);
++                CFRelease(info[i].uid);
++            }
++            params->num = keep;
++        }
++    }
++
+     offset = needed = sizeof(*endpoint) * params->num;
+     endpoint = params->endpoints;
+ 

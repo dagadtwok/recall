@@ -78,6 +78,7 @@ V1_PATCHES = {
     'wine-winemac-activation.patch': '5cce039910a420a16e7d9f8907e17206b1413c6cc4092248548d3d6b29f1138d',
     'wine-msync-spin.patch': 'f53a27cb00a63b4a500fe75fe44ca513c237a14f0801f64f68b4c5e64fca8c33',
     'wine-fast-yield.patch': '98836b8056b3fa185ad296a253534abef042bf49e77e84eb183b8e7850e4b348',
+    'wine-audio-devices.patch': '5bb773b0b9c0bdf8c35ca4d72aa90cf05657b23c8f0e8a92a272c749b4037a46',
 }
 
 

@@ -154,6 +154,19 @@ status distinguishes "nothing yielded"; callers that read it must not set the
 variable. The launcher flag `--no-fast-yield` turns it off for an A/B
 comparison.
 
+`wine-audio-devices.patch` applies after the fast-yield patch above (no
+shared files with any patch above it): when `WINEMAC_AUDIO_DEVICES=1`, the
+audio driver answers Windows' endpoint enumeration with exactly one device
+per direction — this flow's system default — so a game whose sound system
+cycles between endpoints cannot see anything to cycle to. Gaming background:
+Vivox (Overwatch 2's voice chat) keeps re-initializing its client when it
+sees endpoints change, including Bluetooth headphones that switch roles or
+formats, and each reinitialization has stalled Wine's realtime audio client
+for seconds — the whole game freezing with display and Metal HUD. Off by
+default: set the variable in the launch environment to turn it on (the
+candidate contract's `environment` picks it up for the app's own launches),
+or leave it off to keep every endpoint visible.
+
 Menus, Battle.net and every other program keep the standard behavior.
 
 Apply each patch once, in this order, first using `git apply --check`.
